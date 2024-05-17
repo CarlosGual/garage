@@ -91,6 +91,8 @@ class MultiHeadedMLPModule(nn.Module):
             self._layers.append(hidden_layers)
             prev_size = size
 
+        self._mask_input_size = prev_size
+
         self._output_layers = nn.ModuleList()
         for i in range(n_heads):
             output_layer = nn.Sequential()

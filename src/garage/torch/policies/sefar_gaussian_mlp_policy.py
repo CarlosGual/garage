@@ -8,7 +8,7 @@ from garage.torch.modules.sefar_gaussian_mlp_module import \
 from garage.torch.policies.stochastic_policy import StochasticPolicy
 
 
-class GaussianMLPPolicy(StochasticPolicy):
+class SefarGaussianMLPPolicy(StochasticPolicy):
     """MLP whose outputs are fed into a Normal distribution..
 
     A policy that contains a MLP to make prediction based on a gaussian
@@ -67,11 +67,14 @@ class GaussianMLPPolicy(StochasticPolicy):
                  max_std=None,
                  std_parameterization='exp',
                  layer_normalization=False,
-                 name='GaussianMLPPolicy'):
+                 name='GaussianMLPPolicy',
+                 sparsity=0.5,
+                 update_mask=False,
+        ):
         super().__init__(env_spec, name)
         self._obs_dim = env_spec.observation_space.flat_dim
         self._action_dim = env_spec.action_space.flat_dim
-        self._module = GaussianMLPModule(
+        self._module = SefarGaussianMLPModule(
             input_dim=self._obs_dim,
             output_dim=self._action_dim,
             hidden_sizes=hidden_sizes,
@@ -87,6 +90,8 @@ class GaussianMLPPolicy(StochasticPolicy):
             max_std=max_std,
             std_parameterization=std_parameterization,
             layer_normalization=layer_normalization,
+            sparsity=sparsity,
+            update_mask=update_mask
         )
 
     def forward(self, observations):
@@ -101,5 +106,5 @@ class GaussianMLPPolicy(StochasticPolicy):
             dict[str, torch.Tensor]: Additional agent_info, as torch Tensors
 
         """
-        dist = self._module(observations)
-        return dist, dict(mean=dist.mean, log_std=(dist.variance ** .5).log())
+        dist1, dist2 = self._module(observations)
+        return dist1, dist2, dict(mean=dist1.mean, log_std=(dist1.variance ** .5).log()), dict(mean=dist2.mean, log_std=(dist2.variance ** .5).log())

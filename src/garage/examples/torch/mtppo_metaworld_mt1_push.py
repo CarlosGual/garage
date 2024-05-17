@@ -6,7 +6,7 @@ import metaworld
 import torch
 
 from garage import wrap_experiment
-from garage.envs import normalize
+from garage.envs import normalize, GymEnv
 from garage.envs.multi_env_wrapper import MultiEnvWrapper, round_robin_strategy
 from garage.experiment.deterministic import set_seed
 from garage.experiment.task_sampler import MetaWorldTaskSampler
@@ -36,7 +36,7 @@ def mtppo_metaworld_mt1_push(ctxt, seed, epochs, batch_size):
     """
     set_seed(seed)
     n_tasks = 50
-    mt1 = metaworld.MT1('push-v1')
+    mt1 = metaworld.MT1('push-v2')
     train_task_sampler = MetaWorldTaskSampler(mt1, 'train',
                                               lambda env, _: normalize(env))
     envs = [env_up() for env_up in train_task_sampler.sample(n_tasks)]

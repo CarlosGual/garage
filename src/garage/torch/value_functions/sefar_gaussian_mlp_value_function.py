@@ -1,18 +1,18 @@
-"""GaussianMLPPolicy."""
+"""A value function based on a GaussianMLP model."""
 import torch
 from torch import nn
 
 from garage.torch.modules import GaussianMLPModule
 from garage.torch.modules.sefar_gaussian_mlp_module import \
     SefarGaussianMLPModule
-from garage.torch.policies.stochastic_policy import StochasticPolicy
+from garage.torch.value_functions.value_function import ValueFunction
 
 
-class GaussianMLPPolicy(StochasticPolicy):
-    """MLP whose outputs are fed into a Normal distribution..
+class SefarGaussianMLPValueFunction(ValueFunction):
+    """Gaussian MLP Value Function with Model.
 
-    A policy that contains a MLP to make prediction based on a gaussian
-    distribution.
+    It fits the input data to a gaussian distribution estimated by
+    a MLP.
 
     Args:
         env_spec (EnvSpec): Environment specification.
@@ -40,15 +40,8 @@ class GaussianMLPPolicy(StochasticPolicy):
         learn_std (bool): Is std trainable.
         init_std (float): Initial value for std.
             (plain value - not log or exponentiated).
-        min_std (float): Minimum value for std.
-        max_std (float): Maximum value for std.
-        std_parameterization (str): How the std should be parametrized. There
-            are two options:
-            - exp: the logarithm of the std will be stored, and applied a
-               exponential transformation
-            - softplus: the std will be computed as log(1+exp(x))
         layer_normalization (bool): Bool for using layer normalization or not.
-        name (str): Name of policy.
+        name (str): The name of the value function.
 
     """
 
@@ -63,17 +56,25 @@ class GaussianMLPPolicy(StochasticPolicy):
                  output_b_init=nn.init.zeros_,
                  learn_std=True,
                  init_std=1.0,
-                 min_std=1e-6,
-                 max_std=None,
-                 std_parameterization='exp',
                  layer_normalization=False,
-                 name='GaussianMLPPolicy'):
-        super().__init__(env_spec, name)
-        self._obs_dim = env_spec.observation_space.flat_dim
-        self._action_dim = env_spec.action_space.flat_dim
-        self._module = GaussianMLPModule(
-            input_dim=self._obs_dim,
-            output_dim=self._action_dim,
+                 name='GaussianMLPValueFunction',
+                 sparsity=0.5,
+                 update_mask=False,
+                 weight_kd=0.1,
+                 temp=1.0,
+                 forward_head=1,
+                 ):
+        super(SefarGaussianMLPValueFunction, self).__init__(env_spec, name)
+
+        self.forward_head = forward_head
+        self.temp = temp
+        self.weight_kd = weight_kd
+        input_dim = env_spec.observation_space.flat_dim
+        output_dim = 1
+
+        self.module = SefarGaussianMLPModule(
+            input_dim=input_dim,
+            output_dim=output_dim,
             hidden_sizes=hidden_sizes,
             hidden_nonlinearity=hidden_nonlinearity,
             hidden_w_init=hidden_w_init,
@@ -83,23 +84,50 @@ class GaussianMLPPolicy(StochasticPolicy):
             output_b_init=output_b_init,
             learn_std=learn_std,
             init_std=init_std,
-            min_std=min_std,
-            max_std=max_std,
-            std_parameterization=std_parameterization,
+            min_std=None,
+            max_std=None,
+            std_parameterization='exp',
             layer_normalization=layer_normalization,
+            sparsity=sparsity,
+            update_mask=update_mask
         )
 
-    def forward(self, observations):
-        """Compute the action distributions from the observations.
+    def compute_loss(self, obs, returns):
+        r"""Compute mean value of loss.
 
         Args:
-            observations (torch.Tensor): Batch of observations on default
-                torch device.
+            obs (torch.Tensor): Observation from the environment
+                with shape :math:`(N \dot [T], O*)`.
+            returns (torch.Tensor): Acquired returns with shape :math:`(N, )`.
 
         Returns:
-            torch.distributions.Distribution: Batch distribution of actions.
-            dict[str, torch.Tensor]: Additional agent_info, as torch Tensors
+            torch.Tensor: Calculated negative mean scalar value of
+                objective (float).
 
         """
-        dist = self._module(observations)
-        return dist, dict(mean=dist.mean, log_std=(dist.variance ** .5).log())
+        dist1, dist2 = self.module(obs)
+        ll1 = dist1.log_prob(returns.reshape(-1, 1))
+        loss1 = -ll1.mean()
+        ll2 = dist2.log_prob(returns.reshape(-1, 1))
+        loss2 = -ll2.mean()
+        kd_loss = torch.nn.functional.kl_div(ll1/self.temp, ll2/self.temp, reduction='batchmean', log_target=True)
+        loss = loss1 + loss2 + self.weight_kd*kd_loss
+        return loss
+
+    # pylint: disable=arguments-differ
+    def forward(self, obs):
+        r"""Predict value based on paths.
+
+        Args:
+            obs (torch.Tensor): Observation from the environment
+                with shape :math:`(P, O*)`.
+
+        Returns:
+            torch.Tensor: Calculated baselines given observations with
+                shape :math:`(P, O*)`.
+
+        """
+        if self.forward_head == 1:
+            return self.module(obs)[0].mean.flatten(-2)
+        elif self.forward_head == 2:
+            return self.module(obs)[1].mean.flatten(-2)
